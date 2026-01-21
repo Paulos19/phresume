@@ -3,28 +3,28 @@ import { put } from "@vercel/blob";
 import { auth } from "@/auth";
 
 export async function POST(req: NextRequest) {
+  // ... (verificações de token e sessão iguais) ...
   const session = await auth();
-
-  // Segurança básica: Apenas usuários logados podem fazer upload
-  if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
     const formData = await req.formData();
     const file = formData.get("file") as File;
 
     if (!file) {
-      return NextResponse.json({ error: "No file provided" }, { status: 400 });
+      return NextResponse.json({ error: "Nenhum arquivo enviado" }, { status: 400 });
     }
 
-    // Validação de Tamanho (Max 4MB) e Tipo
-    if (file.size > 4 * 1024 * 1024) {
-        return NextResponse.json({ error: "File size too large (max 4MB)" }, { status: 400 });
-    }
+    // --- CORREÇÃO AQUI: Aumentando para 10MB ---
+    const MAX_SIZE = 10 * 1024 * 1024; // 10MB
 
-    // Upload para Vercel Blob
-    // 'avatars/' prefixo organiza o bucket
+    if (file.size > MAX_SIZE) {
+        return NextResponse.json({ 
+            error: `Arquivo muito grande (${(file.size / 1024 / 1024).toFixed(2)}MB). O limite é 10MB.` 
+        }, { status: 400 });
+    }
+    // -------------------------------------------
+
     const filename = `avatars/${session.user.id}-${Date.now()}.${file.name.split('.').pop()}`;
     
     const blob = await put(filename, file, {
@@ -34,8 +34,8 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ url: blob.url });
 
-  } catch (error) {
+  } catch (error: any) {
     console.error("Upload error:", error);
-    return NextResponse.json({ error: "Upload failed" }, { status: 500 });
+    return NextResponse.json({ error: "Falha no upload" }, { status: 500 });
   }
 }

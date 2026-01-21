@@ -2,6 +2,7 @@ export interface PersonalInfo {
   fullName: string;
   headline: string; // Ex: Senior Frontend Developer
   email: string;
+  photoUrl?: string;
   phone: string;
   linkedinUrl?: string;
   githubUrl?: string;

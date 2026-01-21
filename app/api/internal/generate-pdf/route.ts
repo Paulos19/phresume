@@ -5,6 +5,7 @@ import chromium from "@sparticuz/chromium";
 
 // Configuração para Serverless (Vercel)
 export const maxDuration = 60; 
+export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
   const authHeader = req.headers.get("x-api-key");
@@ -24,6 +25,7 @@ export async function POST(req: NextRequest) {
     if (process.env.NODE_ENV === "development") {
       // --- AMBIENTE LOCAL (DEV) ---
       // Usa o Chrome instalado na sua máquina
+      // Se der erro aqui, aponte manualmente o executablePath do seu Chrome
       const localPuppeteer = require("puppeteer-core");
       browser = await localPuppeteer.launch({
         args: ["--no-sandbox", "--disable-setuid-sandbox"],
@@ -34,21 +36,24 @@ export async function POST(req: NextRequest) {
     } else {
       // --- AMBIENTE DE PRODUÇÃO (VERCEL) ---
       
-      // 1. Carrega fonte para não quebrar caracteres (Opcional mas recomendado)
-      // O sparticuz já tenta carregar fontes, mas configurar explicitamente ajuda
-      // chromium.setGraphicsMode = false; // Removido pois pode causar erro de TS
-      
+      // 1. URL do binário do Chromium compatível com Vercel
+      // Usamos uma versão específica (v121) para garantir estabilidade
+      const executablePath = await chromium.executablePath(
+        "https://github.com/Sparticuz/chromium/releases/download/v121.0.0/chromium-v121.0.0-pack.tar"
+      );
+
       browser = await puppeteer.launch({
         args: chromium.args,
-        defaultViewport: { width: 1920, height: 1080 }, // <--- FIX 1: Valor explícito
-        executablePath: await chromium.executablePath(),
-        headless: true, // <--- FIX 2: Valor explícito (ou "shell" para performance)
+        defaultViewport: { width: 1920, height: 1080 },
+        executablePath: executablePath,
+        // CORREÇÃO AQUI: Passamos 'true' (ou "shell") diretamente, ignorando o erro de TS do chromium.headless
+        headless: true, 
       });
     }
 
     const page = await browser.newPage();
 
-    // Define o HTML
+    // Renderiza o HTML
     await page.setContent(html, {
       waitUntil: "networkidle0", 
     });

@@ -3,7 +3,6 @@ import { put } from "@vercel/blob";
 import puppeteer from "puppeteer-core";
 import chromium from "@sparticuz/chromium";
 
-// Configuração para Serverless (Vercel)
 export const maxDuration = 60; 
 export const dynamic = "force-dynamic";
 
@@ -23,9 +22,6 @@ export async function POST(req: NextRequest) {
     let browser;
     
     if (process.env.NODE_ENV === "development") {
-      // --- AMBIENTE LOCAL (DEV) ---
-      // Usa o Chrome instalado na sua máquina
-      // Se der erro aqui, aponte manualmente o executablePath do seu Chrome
       const localPuppeteer = require("puppeteer-core");
       browser = await localPuppeteer.launch({
         args: ["--no-sandbox", "--disable-setuid-sandbox"],
@@ -34,10 +30,6 @@ export async function POST(req: NextRequest) {
         defaultViewport: { width: 1920, height: 1080 }
       });
     } else {
-      // --- AMBIENTE DE PRODUÇÃO (VERCEL) ---
-      
-      // 1. URL do binário do Chromium compatível com Vercel
-      // Usamos uma versão específica (v121) para garantir estabilidade
       const executablePath = await chromium.executablePath(
         "https://github.com/Sparticuz/chromium/releases/download/v121.0.0/chromium-v121.0.0-pack.tar"
       );
@@ -46,19 +38,16 @@ export async function POST(req: NextRequest) {
         args: chromium.args,
         defaultViewport: { width: 1920, height: 1080 },
         executablePath: executablePath,
-        // CORREÇÃO AQUI: Passamos 'true' (ou "shell") diretamente, ignorando o erro de TS do chromium.headless
-        headless: true, 
+        headless: true,
       });
     }
 
     const page = await browser.newPage();
 
-    // Renderiza o HTML
     await page.setContent(html, {
       waitUntil: "networkidle0", 
     });
 
-    // Gera o PDF
     const pdfBuffer = await page.pdf({
       format: "A4",
       printBackground: true,
@@ -67,13 +56,16 @@ export async function POST(req: NextRequest) {
 
     await browser.close();
 
-    // Upload Vercel Blob
+    // --- CORREÇÃO AQUI ---
     const finalName = fileName || `curriculo-${Date.now()}.pdf`;
     
     const blob = await put(finalName, pdfBuffer, {
       access: "public",
       contentType: "application/pdf",
+      // Adiciona sufixo aleatório para evitar erro de "Blob already exists"
+      addRandomSuffix: true, 
     });
+    // ---------------------
 
     return NextResponse.json({ 
       success: true, 

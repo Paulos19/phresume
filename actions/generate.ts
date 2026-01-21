@@ -2,8 +2,17 @@
 
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
-import { ResumeContent } from "@/types/resume";
+import { ResumeContent, TemplateConfig } from "@/types/resume";
 import { revalidatePath } from "next/cache";
+
+// Configuração padrão de fallback caso o currículo ainda não tenha design definido
+const DEFAULT_CONFIG: TemplateConfig = {
+  layout: 'modern',
+  fontFamily: 'Inter',
+  photoPosition: 'left',
+  primaryColor: '#4f46e5',
+  texture: 'none'
+};
 
 export async function generateResumePDF(resumeId: string) {
   const session = await auth();
@@ -12,34 +21,41 @@ export async function generateResumePDF(resumeId: string) {
     return { error: "Sessão inválida. Faça login novamente." };
   }
 
-  // 1. Busca os dados mais recentes do banco (Fonte da Verdade)
-  const resume = await prisma.resume.findUnique({
-    where: { 
-      id: resumeId,
-      userId: session.user.id // Garante que o usuário é dono do currículo
-    },
-  });
-
-  if (!resume) {
-    return { error: "Currículo não encontrado." };
-  }
-
-  const content = resume.content as unknown as ResumeContent;
-
   try {
-    // 2. Prepara o Payload para o n8n
-    // Enviamos o ID para que o n8n possa (opcionalmente) notificar quando acabar
-    // ou usar como nome do arquivo.
+    // 1. Busca os dados mais recentes do banco (Fonte da Verdade)
+    const resume = await prisma.resume.findUnique({
+      where: { 
+        id: resumeId,
+        userId: session.user.id 
+      },
+    });
+
+    if (!resume) {
+      return { error: "Currículo não encontrado." };
+    }
+
+    // 2. Extrai e tipa o conteúdo
+    const content = resume.content as unknown as ResumeContent;
+    
+    // Garante que o templateConfig existe no payload, usando o fallback se necessário
+    const templateConfig = content.templateConfig || DEFAULT_CONFIG;
+
+    // 3. Prepara o Payload completo para o n8n
     const payload = {
       resumeId: resume.id,
       userId: session.user.id,
-      data: content,
-      templateId: "modern-1" // Futuramente você pode ter múltiplos templates
+      data: {
+        ...content,
+        templateConfig // Injetamos explicitamente para garantir que o n8n receba
+      },
+      // templateId pode ser usado como um identificador de versão do motor de renderização no n8n
+      templateId: templateConfig.layout 
     };
 
-    console.log("[GENERATE] Enviando para n8n:", process.env.N8N_WEBHOOK_URL);
+    console.log(`[GENERATE] Iniciando geração para: ${resume.title}`);
+    console.log(`[GENERATE] Webhook: ${process.env.N8N_WEBHOOK_URL}`);
 
-    // 3. Chamada ao Webhook do n8n
+    // 4. Chamada ao Webhook do n8n
     const response = await fetch(process.env.N8N_WEBHOOK_URL!, {
       method: "POST",
       headers: {
@@ -47,8 +63,6 @@ export async function generateResumePDF(resumeId: string) {
         "x-api-key": process.env.N8N_SECRET_TOKEN || "",
       },
       body: JSON.stringify(payload),
-      // O n8n pode demorar uns 5-10s gerando o PDF. 
-      // Em Vercel/Serverless, o timeout padrão é 10s-60s.
       cache: "no-store" 
     });
 
@@ -58,14 +72,15 @@ export async function generateResumePDF(resumeId: string) {
       throw new Error("Falha no processamento externo (n8n).");
     }
 
-    // 4. Esperamos que o n8n retorne um JSON: { "pdfUrl": "https://..." }
+    // 5. O n8n deve retornar um JSON com a URL do PDF hospedado (ex: Vercel Blob)
     const result = await response.json();
 
     if (!result.pdfUrl) {
-      throw new Error("n8n não retornou a URL do PDF.");
+      console.error("[GENERATE] Resposta n8n inválida:", result);
+      throw new Error("O servidor de geração não retornou o link do arquivo.");
     }
 
-    // 5. Salva a URL retornada no banco
+    // 6. Atualiza a URL do PDF e o timestamp no banco de dados
     await prisma.resume.update({
       where: { id: resumeId },
       data: { 
@@ -74,11 +89,13 @@ export async function generateResumePDF(resumeId: string) {
       }
     });
 
-    revalidatePath("/dashboard");
+    // Revalida a cache para que o novo PDF apareça no dashboard imediatamente
+    revalidatePath("/dashboard/resumes");
+    
     return { success: true, pdfUrl: result.pdfUrl };
 
   } catch (error: any) {
     console.error("[GENERATE] Erro crítico:", error);
-    return { error: error.message || "Erro ao gerar PDF." };
+    return { error: error.message || "Erro interno ao processar o PDF." };
   }
 }

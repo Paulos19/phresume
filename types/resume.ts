@@ -58,3 +58,19 @@ export const initialResumeContent: ResumeContent = {
   skills: [],
   languages: []
 };
+
+export interface TemplateConfig {
+  layout: 'modern' | 'classic' | 'minimalist';
+  fontFamily: 'Inter' | 'Roboto' | 'Lora' | 'Montserrat';
+  photoPosition: 'left' | 'right' | 'center';
+  primaryColor: string; // Ex: #4f46e5
+  texture: 'none' | 'dots' | 'waves' | 'lines';
+}
+
+export interface ResumeContent {
+  personalInfo: PersonalInfo;
+  experience: Experience[];
+  education: Education[];
+  skills: Skill[];
+  templateConfig?: TemplateConfig; // Adicione este campo
+}

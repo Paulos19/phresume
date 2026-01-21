@@ -8,8 +8,11 @@ import { Education } from "@/types/resume";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { GraduationCap, Calendar, Plus, Trash2, Pencil, X, School } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea"; // Importando Textarea
+import { GraduationCap, Calendar, Plus, Trash2, Pencil, X, School, Sparkles, Wand2, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { toast } from "sonner";
+import { generateContentFromText } from "@/actions/ai"; // Importando a action
 
 const educationSchema = z.object({
   institution: z.string().min(2, "Instituição é obrigatória"),
@@ -30,6 +33,11 @@ export function EducationForm({ initialData, onUpdate }: EducationFormProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
 
+  // Estados da IA
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [showAiInput, setShowAiInput] = useState(false);
+
   const { register, handleSubmit, reset, setValue, formState: { errors } } = useForm<EducationFormData>({
     resolver: zodResolver(educationSchema),
   });
@@ -38,16 +46,58 @@ export function EducationForm({ initialData, onUpdate }: EducationFormProps) {
     onUpdate(educations);
   }, [educations, onUpdate]);
 
+  // --- LÓGICA DA IA ---
+  const handleAIGenerate = async () => {
+    if (!aiPrompt.trim()) {
+        toast.error("Descreva sua formação primeiro.");
+        return;
+    }
+
+    setIsGenerating(true);
+    toast.info("A IA está analisando sua formação...", { icon: <Sparkles className="text-indigo-400 animate-pulse"/> });
+
+    try {
+        // Envia para o n8n com o tipo "education"
+        const result = await generateContentFromText(aiPrompt, "education");
+
+        if (result.success && result.data) {
+            const aiData = result.data; // Espera-se { institution, degree, startDate, endDate }
+            
+            // Abre o modo de edição para revisar
+            setIsEditing(true);
+            setEditingId(null); // Novo item
+
+            // Preenche o formulário
+            if (aiData.institution) setValue("institution", aiData.institution);
+            if (aiData.degree) setValue("degree", aiData.degree);
+            if (aiData.startDate) setValue("startDate", aiData.startDate);
+            if (aiData.endDate) setValue("endDate", aiData.endDate);
+
+            toast.success("Dados preenchidos! Revise e salve.");
+            setShowAiInput(false);
+            setAiPrompt("");
+        } else {
+            toast.error("Não foi possível entender o texto.");
+        }
+    } catch (error) {
+        toast.error("Erro na comunicação com a IA.");
+    } finally {
+        setIsGenerating(false);
+    }
+  };
+
   const handleAddOrUpdate = (data: EducationFormData) => {
     if (editingId) {
       setEducations(prev => prev.map(item => 
         item.id === editingId ? { ...data, id: editingId } : item
       ));
+      toast.success("Formação atualizada!");
     } else {
       setEducations(prev => [
         { ...data, id: crypto.randomUUID() },
         ...prev
       ]);
+      toast.success("Formação adicionada!");
     }
     cancelEditing();
   };
@@ -59,6 +109,7 @@ export function EducationForm({ initialData, onUpdate }: EducationFormProps) {
     setValue("degree", edu.degree);
     setValue("startDate", edu.startDate);
     setValue("endDate", edu.endDate || "");
+    setShowAiInput(false);
   };
 
   const deleteEducation = (id: string) => {
@@ -74,6 +125,48 @@ export function EducationForm({ initialData, onUpdate }: EducationFormProps) {
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
       
+      {/* --- CARD DE IA --- */}
+      {!isEditing && (
+          <div className="bg-gradient-to-r from-indigo-50 to-purple-50 border border-indigo-100 rounded-xl p-4 shadow-sm mb-6">
+             <div className="flex justify-between items-center mb-2">
+                <h3 className="text-sm font-semibold text-indigo-900 flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-indigo-500" />
+                    Adicionar com IA
+                </h3>
+                <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    onClick={() => setShowAiInput(!showAiInput)}
+                    className="text-indigo-600 hover:text-indigo-700 hover:bg-indigo-100 h-8"
+                >
+                    {showAiInput ? "Fechar" : "Abrir"}
+                </Button>
+             </div>
+             
+             {showAiInput && (
+                 <div className="space-y-3 animate-in fade-in zoom-in-95 duration-200">
+                    <Textarea 
+                        value={aiPrompt}
+                        onChange={(e) => setAiPrompt(e.target.value)}
+                        placeholder="Ex: Fiz Bacharelado em Design na PUC-RJ de 2018 a 2022."
+                        className="bg-white/80 min-h-[80px] text-sm"
+                    />
+                    <div className="flex justify-end">
+                        <Button 
+                            onClick={handleAIGenerate} 
+                            disabled={isGenerating}
+                            size="sm"
+                            className="bg-indigo-600 hover:bg-indigo-700 text-white"
+                        >
+                            {isGenerating ? <Loader2 className="w-4 h-4 animate-spin mr-2"/> : <Wand2 className="w-4 h-4 mr-2"/>}
+                            {isGenerating ? "Processando..." : "Criar Formação"}
+                        </Button>
+                    </div>
+                 </div>
+             )}
+          </div>
+      )}
+
       {!isEditing && (
         <div className="space-y-4">
             <div className="flex justify-between items-center mb-6">
@@ -81,7 +174,7 @@ export function EducationForm({ initialData, onUpdate }: EducationFormProps) {
                     Formação Acadêmica
                 </h3>
                 <Button onClick={() => setIsEditing(true)} size="sm" className="gap-2 bg-indigo-600 hover:bg-indigo-700 text-white">
-                    <Plus className="w-4 h-4" /> Adicionar Formação
+                    <Plus className="w-4 h-4" /> Manual
                 </Button>
             </div>
 
@@ -89,7 +182,7 @@ export function EducationForm({ initialData, onUpdate }: EducationFormProps) {
                 <div className="text-center py-12 border-2 border-dashed rounded-xl bg-muted/20">
                     <School className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
                     <p className="text-muted-foreground font-medium">Nenhuma formação registrada</p>
-                    <p className="text-xs text-muted-foreground mt-1">Adicione graduações, cursos técnicos ou certificações.</p>
+                    <p className="text-xs text-muted-foreground mt-1">Use a IA acima ou adicione manualmente.</p>
                 </div>
             ) : (
                 <div className="grid gap-4">

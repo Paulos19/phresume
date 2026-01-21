@@ -80,3 +80,21 @@ export async function updateResume(id: string, content: ResumeContent) {
     return { error: "Erro ao salvar alterações. Tente novamente." };
   }
 }
+
+export async function deleteResume(id: string) {
+    const session = await auth();
+    if (!session?.user?.id) return { error: "Não autorizado" };
+
+    try {
+        await prisma.resume.delete({
+            where: {
+                id,
+                userId: session.user.id // Garante que só deleta o próprio
+            }
+        });
+        revalidatePath("/dashboard/resumes");
+        return { success: true };
+    } catch (error) {
+        return { error: "Erro ao deletar" };
+    }
+}

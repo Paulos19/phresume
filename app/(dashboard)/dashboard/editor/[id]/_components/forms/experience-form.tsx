@@ -10,11 +10,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Briefcase, Calendar, Plus, Trash2, Pencil, X, Sparkles } from "lucide-react";
+import { Briefcase, Calendar, Plus, Trash2, Pencil, X, Sparkles, Wand2, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
+import { generateContentFromText } from "@/actions/ai"; // Importe a action
 
-// Schema de validação para UM item de experiência
+// Schema de validação
 const experienceItemSchema = z.object({
   company: z.string().min(2, "Nome da empresa é obrigatório"),
   position: z.string().min(2, "Cargo é obrigatório"),
@@ -39,9 +41,13 @@ export function ExperienceForm({ initialData, onUpdate }: ExperienceFormProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
 
-  // Hook Form
+  // Estados da IA
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [showAiInput, setShowAiInput] = useState(false);
+
   const { register, handleSubmit, reset, setValue, watch, formState: { errors } } = useForm<ExperienceFormData>({
-    resolver: zodResolver(experienceItemSchema),
+    resolver: zodResolver(experienceItemSchema as any),
     defaultValues: {
       current: false,
       company: "",
@@ -54,23 +60,65 @@ export function ExperienceForm({ initialData, onUpdate }: ExperienceFormProps) {
 
   const isCurrent = watch("current");
 
-  // Atualiza o pai sempre que a lista local mudar
   useEffect(() => {
     onUpdate(experiences);
   }, [experiences, onUpdate]);
 
+  // --- LÓGICA DA IA ---
+  const handleAIGenerate = async () => {
+    if (!aiPrompt.trim()) {
+        toast.error("Descreva a experiência primeiro.");
+        return;
+    }
+
+    setIsGenerating(true);
+    toast.info("A IA está estruturando sua experiência...", { icon: <Sparkles className="text-indigo-400 animate-pulse"/> });
+
+    try {
+        // Envia para o n8n com o tipo "experience"
+        const result = await generateContentFromText(aiPrompt, "experience");
+
+        if (result.success && result.data) {
+            const aiData = result.data; // Espera-se { company, position, startDate, endDate, current, description }
+            
+            // Abre o modo de edição para revisar os dados
+            setIsEditing(true);
+            setEditingId(null); // É um novo item
+
+            // Preenche o formulário
+            if (aiData.company) setValue("company", aiData.company);
+            if (aiData.position) setValue("position", aiData.position);
+            if (aiData.description) setValue("description", aiData.description);
+            
+            // Tratamento de datas (IA deve retornar YYYY-MM-DD ou null)
+            if (aiData.startDate) setValue("startDate", aiData.startDate);
+            if (aiData.endDate) setValue("endDate", aiData.endDate);
+            
+            if (aiData.current) {
+                setValue("current", true);
+                setValue("endDate", undefined);
+            }
+
+            toast.success("Dados preenchidos! Revise e salve.");
+            setShowAiInput(false);
+            setAiPrompt("");
+        } else {
+            toast.error("Não foi possível entender o texto.");
+        }
+    } catch (error) {
+        toast.error("Erro na comunicação com a IA.");
+    } finally {
+        setIsGenerating(false);
+    }
+  };
+
   const handleAddOrUpdate = (data: ExperienceFormData) => {
     if (editingId) {
-      // Atualizar existente
-      setExperiences(prev => prev.map(item => 
-        item.id === editingId ? { ...data, id: editingId } : item
-      ));
+      setExperiences(prev => prev.map(item => item.id === editingId ? { ...data, id: editingId } : item));
+      toast.success("Experiência atualizada!");
     } else {
-      // Criar novo (Gera ID temporário)
-      setExperiences(prev => [
-        { ...data, id: crypto.randomUUID() },
-        ...prev // Adiciona no topo
-      ]);
+      setExperiences(prev => [{ ...data, id: crypto.randomUUID() }, ...prev]);
+      toast.success("Experiência adicionada!");
     }
     cancelEditing();
   };
@@ -78,13 +126,13 @@ export function ExperienceForm({ initialData, onUpdate }: ExperienceFormProps) {
   const startEditing = (experience: Experience) => {
     setEditingId(experience.id);
     setIsEditing(true);
-    // Popula o form
     setValue("company", experience.company);
     setValue("position", experience.position);
     setValue("startDate", experience.startDate);
     setValue("endDate", experience.endDate || "");
     setValue("current", experience.current);
     setValue("description", experience.description);
+    setShowAiInput(false); // Esconde IA ao editar manual
   };
 
   const deleteExperience = (id: string) => {
@@ -100,7 +148,49 @@ export function ExperienceForm({ initialData, onUpdate }: ExperienceFormProps) {
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
       
-      {/* HEADER & LISTA DE EXPERIÊNCIAS */}
+      {/* --- CARD DE IA (Só aparece se não estiver editando, ou pode deixar fixo) --- */}
+      {!isEditing && (
+          <div className="bg-gradient-to-r from-indigo-50 to-purple-50 border border-indigo-100 rounded-xl p-4 shadow-sm mb-6">
+             <div className="flex justify-between items-center mb-2">
+                <h3 className="text-sm font-semibold text-indigo-900 flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-indigo-500" />
+                    Adicionar com IA
+                </h3>
+                <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    onClick={() => setShowAiInput(!showAiInput)}
+                    className="text-indigo-600 hover:text-indigo-700 hover:bg-indigo-100 h-8"
+                >
+                    {showAiInput ? "Fechar" : "Abrir"}
+                </Button>
+             </div>
+             
+             {showAiInput && (
+                 <div className="space-y-3 animate-in fade-in zoom-in-95 duration-200">
+                    <Textarea 
+                        value={aiPrompt}
+                        onChange={(e) => setAiPrompt(e.target.value)}
+                        placeholder="Ex: Trabalhei como Designer Sênior na Apple de Jan 2020 até hoje. Eu liderava o time de design system e criei componentes usados por 1M de usuários."
+                        className="bg-white/80 min-h-[100px] text-sm"
+                    />
+                    <div className="flex justify-end">
+                        <Button 
+                            onClick={handleAIGenerate} 
+                            disabled={isGenerating}
+                            size="sm"
+                            className="bg-indigo-600 hover:bg-indigo-700 text-white"
+                        >
+                            {isGenerating ? <Loader2 className="w-4 h-4 animate-spin mr-2"/> : <Wand2 className="w-4 h-4 mr-2"/>}
+                            {isGenerating ? "Processando..." : "Criar Experiência"}
+                        </Button>
+                    </div>
+                 </div>
+             )}
+          </div>
+      )}
+
+      {/* HEADER & LISTA */}
       {!isEditing && (
         <div className="space-y-4">
             <div className="flex justify-between items-center mb-6">
@@ -108,7 +198,7 @@ export function ExperienceForm({ initialData, onUpdate }: ExperienceFormProps) {
                     Histórico Profissional
                 </h3>
                 <Button onClick={() => setIsEditing(true)} size="sm" className="gap-2 bg-indigo-600 hover:bg-indigo-700 text-white">
-                    <Plus className="w-4 h-4" /> Adicionar Experiência
+                    <Plus className="w-4 h-4" /> Manual
                 </Button>
             </div>
 
@@ -116,7 +206,7 @@ export function ExperienceForm({ initialData, onUpdate }: ExperienceFormProps) {
                 <div className="text-center py-12 border-2 border-dashed rounded-xl bg-muted/20">
                     <Briefcase className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
                     <p className="text-muted-foreground font-medium">Nenhuma experiência registrada</p>
-                    <p className="text-xs text-muted-foreground mt-1">Adicione seus empregos passados e atuais.</p>
+                    <p className="text-xs text-muted-foreground mt-1">Use a IA acima ou adicione manualmente.</p>
                 </div>
             ) : (
                 <div className="grid gap-4">
@@ -152,7 +242,7 @@ export function ExperienceForm({ initialData, onUpdate }: ExperienceFormProps) {
                                         </Button>
                                     </div>
                                 </div>
-                                <p className="mt-3 text-sm text-muted-foreground line-clamp-2">
+                                <p className="mt-3 text-sm text-muted-foreground line-clamp-2 whitespace-pre-line">
                                     {exp.description}
                                 </p>
                             </motion.div>
@@ -163,7 +253,7 @@ export function ExperienceForm({ initialData, onUpdate }: ExperienceFormProps) {
         </div>
       )}
 
-      {/* FORMULÁRIO DE EDIÇÃO/CRIAÇÃO */}
+      {/* FORMULÁRIO DE EDIÇÃO */}
       {isEditing && (
         <motion.div 
             initial={{ opacity: 0, scale: 0.98 }}
@@ -183,28 +273,24 @@ export function ExperienceForm({ initialData, onUpdate }: ExperienceFormProps) {
             <form onSubmit={handleSubmit(handleAddOrUpdate)} className="space-y-5">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                     
-                    {/* Cargo */}
                     <div className="space-y-2">
                         <Label>Cargo / Função <span className="text-red-500">*</span></Label>
                         <Input {...register("position")} placeholder="Ex: Desenvolvedor Full Stack" className="bg-background" />
                         {errors.position && <p className="text-red-500 text-xs">{errors.position.message}</p>}
                     </div>
 
-                    {/* Empresa */}
                     <div className="space-y-2">
                         <Label>Empresa <span className="text-red-500">*</span></Label>
                         <Input {...register("company")} placeholder="Ex: Google Inc." className="bg-background" />
                         {errors.company && <p className="text-red-500 text-xs">{errors.company.message}</p>}
                     </div>
 
-                    {/* Data Início */}
                     <div className="space-y-2">
                         <Label>Data de Início <span className="text-red-500">*</span></Label>
                         <Input type="date" {...register("startDate")} className="bg-background block w-full" />
                         {errors.startDate && <p className="text-red-500 text-xs">{errors.startDate.message}</p>}
                     </div>
 
-                    {/* Data Término */}
                     <div className="space-y-2">
                         <Label className={cn("transition-colors", isCurrent && "text-muted-foreground")}>Data de Término</Label>
                         <Input 
@@ -213,7 +299,6 @@ export function ExperienceForm({ initialData, onUpdate }: ExperienceFormProps) {
                             disabled={isCurrent} 
                             className="bg-background block w-full disabled:opacity-50" 
                         />
-                        {errors.endDate && <p className="text-red-500 text-xs">{errors.endDate.message}</p>}
                         
                         <div className="flex items-center space-x-2 mt-2">
                             <Checkbox 
@@ -221,24 +306,18 @@ export function ExperienceForm({ initialData, onUpdate }: ExperienceFormProps) {
                                 checked={isCurrent} 
                                 onCheckedChange={(checked) => {
                                     setValue("current", checked === true);
-                                    if (checked) setValue("endDate", undefined); // Limpa data se for atual
+                                    if (checked) setValue("endDate", undefined);
                                 }}
                             />
-                            <label htmlFor="current" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer">
+                            <label htmlFor="current" className="text-sm font-medium leading-none cursor-pointer">
                                 Trabalho aqui atualmente
                             </label>
                         </div>
                     </div>
                 </div>
 
-                {/* Descrição */}
                 <div className="space-y-2">
-                    <div className="flex justify-between">
-                        <Label>Principais Atividades <span className="text-red-500">*</span></Label>
-                        <button type="button" className="text-xs text-indigo-600 flex items-center gap-1 hover:underline">
-                           <Sparkles className="w-3 h-3" /> Melhorar com IA (Em breve)
-                        </button>
-                    </div>
+                    <Label>Principais Atividades <span className="text-red-500">*</span></Label>
                     <Textarea 
                         {...register("description")} 
                         placeholder="• Desenvolvi interfaces usando React...&#10;• Liderei equipe de 5 pessoas..." 
